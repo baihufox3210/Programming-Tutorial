@@ -4,6 +4,9 @@ import static edu.wpi.first.units.Units.Meters;
 import static edu.wpi.first.units.Units.MetersPerSecond;
 import java.util.List;
 import java.util.function.Supplier;
+import java.util.stream.IntStream;
+import java.util.stream.Stream;
+
 import com.pathplanner.lib.auto.AutoBuilder;
 import com.pathplanner.lib.config.RobotConfig;
 import com.pathplanner.lib.controllers.PPLTVController;
@@ -22,6 +25,7 @@ import com.studica.frc.AHRS;
 import com.studica.frc.AHRS.NavXComType;
 
 import dev.doglog.DogLog;
+import edu.wpi.first.math.Pair;
 import edu.wpi.first.math.VecBuilder;
 import edu.wpi.first.math.estimator.DifferentialDrivePoseEstimator;
 import edu.wpi.first.math.geometry.Pose2d;
@@ -124,10 +128,9 @@ public class Drivetrain implements Subsystem{
         BackRightConfig
             .follow(RightWheels.FrontMotor);
 
-        motors.get(0).configure(FrontLeftConfig, ResetMode.kResetSafeParameters, PersistMode.kPersistParameters);
-        motors.get(1).configure(BackLeftConfig, ResetMode.kResetSafeParameters, PersistMode.kPersistParameters);
-        motors.get(2).configure(FrontRightConfig, ResetMode.kResetSafeParameters, PersistMode.kPersistParameters);
-        motors.get(3).configure(BackRightConfig, ResetMode.kResetSafeParameters, PersistMode.kPersistParameters);
+        List<SparkMaxConfig> cfg = List.of(FrontLeftConfig, BackLeftConfig, FrontRightConfig, BackRightConfig);
+
+        IntStream.range(0, 4).forEach(i -> motors.get(i).configure(cfg.get(i), ResetMode.kResetSafeParameters, PersistMode.kPersistParameters));
         
         autoInit();
         if(RobotBase.isSimulation()) simInit();
