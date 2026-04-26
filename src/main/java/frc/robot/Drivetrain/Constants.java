@@ -26,11 +26,14 @@ public class Constants {
     public static final LinearVelocity MaxVelocity = MetersPerSecond.of(RPM.of(5676).div(GearRatio).in(RotationsPerSecond)*WheelRadius.times(2*Math.PI).in(Meters));
     public static final AngularVelocity MaxOmega = RadiansPerSecond.of(MaxVelocity.in(MetersPerSecond)/TrackWidth.div(2).in(Meters));
 
+    public static final double SimMass = 28.0;
+    public static final double SimMOI  = 1.3;
+
     public class LeftWheels {
         public static final int FrontMotor = 10;
         public static final int RearMotor = 11;
         public static final ClosedLoopConfig PID = new ClosedLoopConfig()
-            .pid(0, 0, 0)
+            .pid(1, 0, 0)
             .feedbackSensor(FeedbackSensor.kPrimaryEncoder);
         public static final FeedForwardConfig FF = new FeedForwardConfig()
             .sva(0, 0, 0);
@@ -43,7 +46,7 @@ public class Constants {
         public static final int FrontMotor = 12;
         public static final int RearMotor = 13;
         public static final ClosedLoopConfig PID = new ClosedLoopConfig()
-            .pid(0, 0, 0)
+            .pid(1, 0, 0)
             .feedbackSensor(FeedbackSensor.kPrimaryEncoder);
         public static final FeedForwardConfig FF = new FeedForwardConfig()
             .sva(0, 0, 0);

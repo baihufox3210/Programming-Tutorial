@@ -14,6 +14,7 @@ import com.pathplanner.lib.controllers.PPLTVController;
 import com.revrobotics.PersistMode;
 import com.revrobotics.RelativeEncoder;
 import com.revrobotics.ResetMode;
+import com.revrobotics.sim.SparkMaxSim;
 import com.revrobotics.spark.SparkClosedLoopController;
 import com.revrobotics.spark.SparkMax;
 import com.revrobotics.spark.SparkBase.ControlType;
@@ -29,10 +30,16 @@ import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.math.kinematics.ChassisSpeeds;
 import edu.wpi.first.math.kinematics.DifferentialDriveWheelPositions;
 import edu.wpi.first.math.kinematics.DifferentialDriveWheelSpeeds;
+import edu.wpi.first.math.system.plant.DCMotor;
+import edu.wpi.first.networktables.NetworkTableInstance;
+import edu.wpi.first.networktables.StructPublisher;
 import edu.wpi.first.units.measure.AngularVelocity;
 import edu.wpi.first.units.measure.LinearVelocity;
 import edu.wpi.first.wpilibj.DriverStation;
+import edu.wpi.first.wpilibj.RobotBase;
+import edu.wpi.first.wpilibj.RobotController;
 import edu.wpi.first.wpilibj.DriverStation.Alliance;
+import edu.wpi.first.wpilibj.simulation.DifferentialDrivetrainSim;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.Subsystem;
 import frc.robot.Drivetrain.Constants.LeftWheels;
@@ -55,13 +62,20 @@ public class Drivetrain implements Subsystem{
      * public SparkMax FrontLeftMotor, FrontRightMotor, RearLeftMotor, RearRightMotor, but the List iterator can make the program more concisely and readable
      */
     public List<SparkMax> motors;
+    public SparkMaxSim leftSimMotor, rightSimMotor;
+    
     public List<RelativeEncoder> encoders;
+
     public SparkClosedLoopController LeftPID, RightPID;
     public AHRS gyro; //using the NavX gyroscope, putting it on the RoboRIO MXP port
     public DifferentialDrivePoseEstimator PoseEstimator;
     private static Drivetrain inst;
     
     private SparkMaxConfig FrontLeftConfig, FrontRightConfig, BackLeftConfig, BackRightConfig;
+
+    private DifferentialDrivetrainSim driveSim;
+
+    private final StructPublisher<Pose2d> publisherField;
 
     private Drivetrain(){
         //initialize the variables we just defined
@@ -73,6 +87,7 @@ public class Drivetrain implements Subsystem{
             new SparkMax(RightWheels.RearMotor, MotorType.kBrushless)
         );
         encoders = motors.stream().map(SparkMax::getEncoder).toList();
+
         LeftPID = motors.get(0).getClosedLoopController();
         RightPID = motors.get(2).getClosedLoopController();
 
@@ -115,6 +130,23 @@ public class Drivetrain implements Subsystem{
         motors.get(3).configure(BackRightConfig, ResetMode.kResetSafeParameters, PersistMode.kPersistParameters);
         
         autoInit();
+
+        if(RobotBase.isSimulation()) {
+            leftSimMotor = new SparkMaxSim(motors.get(0), DCMotor.getNEO(2));
+            rightSimMotor = new SparkMaxSim(motors.get(2), DCMotor.getNEO(2));
+
+            driveSim = new DifferentialDrivetrainSim(
+                DCMotor.getNEO(2),
+                Constants.GearRatio,
+                Constants.SimMOI,
+                Constants.SimMass,
+                Constants.WheelRadius.in(Meters),
+                Constants.TrackWidth.in(Meters),
+                null
+            );
+        }
+
+        publisherField = NetworkTableInstance.getDefault().getStructTopic("Field", Pose2d.struct).publish();
     }
 
     public DifferentialDriveWheelPositions getPosition(){
@@ -147,6 +179,27 @@ public class Drivetrain implements Subsystem{
     @Override
     public void periodic(){
         PoseEstimator.update(gyro.getRotation2d(), getPosition());
+        publisherField.set(PoseEstimator.getEstimatedPosition());
+    }
+
+    @Override
+    public void simulationPeriodic() {
+        driveSim.setInputs(
+            motors.get(0).get() * RobotController.getBatteryVoltage(),
+            motors.get(2).get() * RobotController.getBatteryVoltage()
+        );
+
+        driveSim.update(0.02);
+
+        double wheelCircumference = Constants.WheelRadius.times(2 * Math.PI).in(Meters);
+
+        double leftMotorRot = driveSim.getLeftPositionMeters() / wheelCircumference * Constants.GearRatio;
+        double rightMotorRot = driveSim.getRightPositionMeters() / wheelCircumference * Constants.GearRatio;
+
+        leftSimMotor.setPosition(leftMotorRot);
+        rightSimMotor.setPosition(rightMotorRot);
+
+        gyro.setAngleAdjustment(driveSim.getHeading().getDegrees());
     }
 
     public void resetPose(Pose2d pose){
