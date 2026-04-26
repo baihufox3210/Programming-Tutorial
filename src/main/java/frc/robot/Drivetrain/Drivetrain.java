@@ -2,7 +2,6 @@ package frc.robot.Drivetrain;
 
 import static edu.wpi.first.units.Units.Meters;
 import static edu.wpi.first.units.Units.MetersPerSecond;
-
 import java.util.List;
 import java.util.function.Supplier;
 import com.pathplanner.lib.auto.AutoBuilder;
@@ -36,9 +35,6 @@ import edu.wpi.first.wpilibj.RobotBase;
 import edu.wpi.first.wpilibj.RobotController;
 import edu.wpi.first.wpilibj.DriverStation.Alliance;
 import edu.wpi.first.wpilibj.simulation.DifferentialDrivetrainSim;
-import edu.wpi.first.wpilibj.simulation.DifferentialDrivetrainSim.KitbotGearing;
-import edu.wpi.first.wpilibj.simulation.DifferentialDrivetrainSim.KitbotMotor;
-import edu.wpi.first.wpilibj.simulation.DifferentialDrivetrainSim.KitbotWheelSize;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.Subsystem;
 import frc.robot.Drivetrain.Constants.LeftWheels;
@@ -61,17 +57,19 @@ public class Drivetrain implements Subsystem{
      * public SparkMax FrontLeftMotor, FrontRightMotor, RearLeftMotor, RearRightMotor, but the List iterator can make the program more concisely and readable
      */
     public List<SparkMax> motors;
+    public SparkMaxSim leftSimMotor, rightSimMotor;
+    
     public List<RelativeEncoder> encoders;
+    public SparkRelativeEncoderSim LeftEncoderSim, RightEncoderSim;
+
     public SparkClosedLoopController LeftPID, RightPID;
     public AHRS gyro; //using the NavX gyroscope, putting it on the RoboRIO MXP port
     public DifferentialDrivePoseEstimator PoseEstimator;
     private static Drivetrain inst;
-
-    private List<SparkMaxSim> SimMotors;
-    private List<SparkRelativeEncoderSim> SimEncoders;
-    private DifferentialDrivetrainSim SimSystem;
     
     private SparkMaxConfig FrontLeftConfig, FrontRightConfig, BackLeftConfig, BackRightConfig;
+
+    private DifferentialDrivetrainSim driveSim;
 
     private Drivetrain(){
         //initialize the variables we just defined
@@ -83,6 +81,7 @@ public class Drivetrain implements Subsystem{
             new SparkMax(RightWheels.RearMotor, MotorType.kBrushless)
         );
         encoders = motors.stream().map(SparkMax::getEncoder).toList();
+
         LeftPID = motors.get(0).getClosedLoopController();
         RightPID = motors.get(2).getClosedLoopController();
 
@@ -102,8 +101,8 @@ public class Drivetrain implements Subsystem{
             .smartCurrentLimit(40);
         FrontLeftConfig.closedLoop.apply(LeftWheels.PID).apply(LeftWheels.FF).apply(LeftWheels.Motion); //applying the clsed loop control configuration
         FrontLeftConfig.encoder
-            .positionConversionFactor(1/Constants.GearRatio) //Convert to mechanism rotations
-            .velocityConversionFactor(1/Constants.GearRatio/60); //Convert to mechanism rot/s
+            .positionConversionFactor(Constants.PositionConversionFactor) //Convert to mechanism rotations
+            .velocityConversionFactor(Constants.VelocityConversionFactor); //Convert to mechanism rot/s
         BackLeftConfig
             .follow(LeftWheels.FrontMotor);
 
@@ -147,18 +146,28 @@ public class Drivetrain implements Subsystem{
     }
 
     public Command drive(ChassisSpeeds speeds){
-        return run(() -> {
-            DifferentialDriveWheelSpeeds targetSpeeds = Constants.kinematics.toWheelSpeeds(ChassisSpeeds.discretize(speeds, 0.01));
-            targetSpeeds.desaturate(Constants.MaxVelocity);
+        DifferentialDriveWheelSpeeds targetSpeeds = Constants.kinematics.toWheelSpeeds(ChassisSpeeds.discretize(speeds, 0.01));
 
-            if(RobotBase.isReal()){
-                LeftPID.setSetpoint(targetSpeeds.leftMetersPerSecond, ControlType.kMAXMotionVelocityControl);
-                RightPID.setSetpoint(targetSpeeds.rightMetersPerSecond, ControlType.kMAXMotionVelocityControl);
-            }else{
-                SimMotors.get(0).setAppliedOutput(targetSpeeds.leftMetersPerSecond/Constants.MaxVelocity.in(MetersPerSecond));
-                SimMotors.get(2).setAppliedOutput(targetSpeeds.rightMetersPerSecond/Constants.MaxVelocity.in(MetersPerSecond));
-            }
-        });
+        if(RobotBase.isReal()) {
+            return run(
+                () -> {
+                    targetSpeeds.desaturate(Constants.MaxVelocity);
+                    LeftPID.setSetpoint(targetSpeeds.leftMetersPerSecond, ControlType.kMAXMotionVelocityControl);
+                    RightPID.setSetpoint(targetSpeeds.rightMetersPerSecond, ControlType.kMAXMotionVelocityControl);
+                }
+            );
+        }
+        else {
+            return run(
+                () -> {
+                    double leftSpeed = targetSpeeds.leftMetersPerSecond / Constants.MaxVelocity.in(MetersPerSecond);
+                    double rightSpeed = targetSpeeds.leftMetersPerSecond / Constants.MaxVelocity.in(MetersPerSecond);
+
+                    leftSimMotor.setAppliedOutput(leftSpeed);
+                    rightSimMotor.setAppliedOutput(rightSpeed);
+                }
+            );
+        }
     }
 
     public void resetPose(Pose2d pose){
@@ -171,24 +180,22 @@ public class Drivetrain implements Subsystem{
         PoseEstimator.update(gyro.getRotation2d(), getPosition());
     }
 
-    private void simInit(){
-        SimMotors = motors.stream().map(m -> new SparkMaxSim(m, DCMotor.getNEO(1))).toList();
-        SimEncoders = SimMotors.stream().map(SparkMaxSim::getRelativeEncoderSim).toList();
-        SimSystem = DifferentialDrivetrainSim.createKitbotSim(
-            KitbotMotor.kDoubleNEOPerSide, 
-            KitbotGearing.k10p71, 
-            KitbotWheelSize.kSixInch, 
-            null);
-    }
-
     @Override
-    public void simulationPeriodic(){
-        SimSystem.setInputs(motors.get(0).get()*RobotController.getBatteryVoltage(), 
-                            motors.get(2).get()*RobotController.getBatteryVoltage());
-        SimSystem.update(0.02);
-        SimEncoders.get(0).setPosition(SimSystem.getLeftPositionMeters()/Constants.WheelRadius.times(2*Math.PI).in(Meters));
-        SimEncoders.get(2).setPosition(SimSystem.getRightPositionMeters()/Constants.WheelRadius.times(2*Math.PI).in(Meters));
-        gyro.setAngleAdjustment(-SimSystem.getHeading().getDegrees());
+    public void simulationPeriodic() {
+        driveSim.setInputs(
+            leftSimMotor.getAppliedOutput() * RobotController.getBatteryVoltage(),
+            rightSimMotor.getAppliedOutput() * RobotController.getBatteryVoltage()
+        );
+
+        driveSim.update(0.02);
+
+        LeftEncoderSim.setPosition(driveSim.getLeftPositionMeters());
+        RightEncoderSim.setPosition(driveSim.getRightPositionMeters());
+
+        LeftEncoderSim.setVelocity(driveSim.getLeftVelocityMetersPerSecond());
+        RightEncoderSim.setVelocity(driveSim.getRightVelocityMetersPerSecond());
+
+        gyro.setAngleAdjustment(driveSim.getHeading().getDegrees());
     }
 
     private void autoInit(){
@@ -199,14 +206,37 @@ public class Drivetrain implements Subsystem{
             () -> Constants.kinematics.toChassisSpeeds(getSpeeds()), 
             (speeds, ff) -> drive(speeds), 
             new PPLTVController(
-                VecBuilder.fill(0,0,0), 
-                VecBuilder.fill(0,0), 0.02), 
+                VecBuilder.fill(1.0,1.0,1.0), 
+                VecBuilder.fill(1.0,1.0),
+                0.02
+            ), 
             RobotConfig.fromGUISettings(), 
             () -> DriverStation.getAlliance().orElse(Alliance.Blue) == Alliance.Red, 
             this); 
        }catch(Exception e){
         DriverStation.reportError(e.getMessage(), e.getStackTrace());
        }
+    }
+
+    private void simInit() {
+        driveSim = new DifferentialDrivetrainSim(
+            DCMotor.getNEO(2),
+            Constants.GearRatio,
+            Constants.SimMOI,
+            Constants.SimMass,
+            Constants.WheelRadius.in(Meters) / Math.PI / 2,
+            Constants.kinematics.trackWidthMeters,
+            null
+        );
+
+        leftSimMotor = new SparkMaxSim(motors.get(0), DCMotor.getNEO(2));
+        rightSimMotor = new SparkMaxSim(motors.get(2), DCMotor.getNEO(2));
+
+        LeftEncoderSim = leftSimMotor.getRelativeEncoderSim();
+        RightEncoderSim = rightSimMotor.getRelativeEncoderSim();
+
+        leftSimMotor.useDriverStationEnable();
+        rightSimMotor.useDriverStationEnable();
     }
 
     public static Drivetrain getInstance(){
